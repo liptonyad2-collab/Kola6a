@@ -22,6 +22,48 @@ export default function CatalogDashboard() {
   const [services, setServices] = useState<Service[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "unauthorized" | "error">("loading");
   const [errorMessage, setErrorMessage] = useState("");
+  const [selected, setSelected] = useState<Service | null>(null);
+  const [draftName, setDraftName] = useState("");
+  const [draftUnit, setDraftUnit] = useState("piece");
+  const [draftActive, setDraftActive] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [editError, setEditError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  function openService(service: Service) {
+    setSelected(service);
+    setDraftName(service.name);
+    setDraftUnit(service.unit);
+    setDraftActive(service.active);
+    setEditError("");
+    setNotice("");
+  }
+
+  async function saveService() {
+    if (!selected || !profile || !["owner", "admin"].includes(profile.role)) return;
+    const name = draftName.trim();
+    if (!name || name.length > 120) {
+      setEditError("Название должно содержать от 1 до 120 символов");
+      return;
+    }
+    setSaving(true);
+    setEditError("");
+    try {
+      const { data, error } = await createClient().from("services")
+        .update({ name, unit: draftUnit, active: draftActive })
+        .eq("id", selected.id)
+        .select("id,category_id,name,unit,active")
+        .single();
+      if (error) throw error;
+      setServices(old => old.map(item => item.id === data.id ? data : item));
+      setSelected(null);
+      setNotice("Изменения услуги сохранены в Supabase");
+    } catch (cause) {
+      setEditError(cause instanceof Error ? cause.message : "Не удалось сохранить");
+    } finally {
+      setSaving(false);
+    }
+  }
 
   const load = useCallback(async () => {
     try {
@@ -87,9 +129,10 @@ export default function CatalogDashboard() {
       <div className="content">
         <header>
           <div><p className="eyebrow">Управление бизнесом</p><h1>Каталог услуг</h1>
-          <p className="muted">Данные загружены из базы Supabase. Редактирование подключим следующим этапом.</p></div>
-          <div className="pill">Подключено к базе · чтение</div>
+          <p className="muted">Данные из Supabase. Нажми на услугу, чтобы открыть её карточку и изменить настройки.</p></div>
+          <div className="pill">Каталог · подключён к базе</div>
         </header>
+        {notice && <p className="saveNotice" role="status">{notice}</p>}
         <section className="stats" aria-label="Сводка каталога">
           <div><span>Направлений</span><strong>{directions.length}</strong></div>
           <div><span>Категорий</span><strong>{categories.length}</strong></div>
@@ -107,8 +150,11 @@ export default function CatalogDashboard() {
                   <div className="category" key={category.id}>
                     <h3>{category.name}</h3>
                     <ul>{services.filter(s => s.category_id === category.id).map(service => (
-                      <li key={service.id}><span>{service.name}</span>
-                        <small>{units[service.unit] || service.unit} · {service.active ? "активна" : "черновик"}</small>
+                      <li key={service.id}>
+                        <button type="button" className="serviceButton" onClick={() => openService(service)} aria-label={`Открыть услугу ${service.name}`}>
+                          <span>{service.name}</span>
+                          <small>{units[service.unit] || service.unit} · {service.active ? "активна" : "черновик"} <span aria-hidden="true">›</span></small>
+                        </button>
                       </li>
                     ))}</ul>
                   </div>
@@ -117,7 +163,43 @@ export default function CatalogDashboard() {
             );
           })}
         </section>
-        <footer>Сейчас доступен только просмотр каталога. Продажи и финансовые операции ещё не активированы.</footer>
+        <footer>Управление каталогом подключено. Продажи, бронирования и финансовые операции ещё не реализованы.</footer>
+        {selected && (
+          <div className="editBackdrop" onClick={() => setSelected(null)}>
+            <section className="editPanel" role="dialog" aria-modal="true" aria-labelledby="editTitle" onClick={event => event.stopPropagation()}>
+              <div className="editHeader">
+                <h2 id="editTitle">Карточка услуги</h2>
+                <button type="button" className="closeEditor" onClick={() => setSelected(null)} aria-label="Закрыть">✕</button>
+              </div>
+              <p className="muted">Настройки одной услуги из каталога. Изменения сохраняются в Supabase.</p>
+              <label htmlFor="serviceName">Название</label>
+              <input id="serviceName" type="text" value={draftName} maxLength={120}
+                onChange={event => setDraftName(event.target.value)} disabled={!["owner","admin"].includes(profile?.role || "")}/>
+              <label htmlFor="serviceUnit">Единица учёта</label>
+              <select id="serviceUnit" value={draftUnit} onChange={event => setDraftUnit(event.target.value)}
+                disabled={!["owner","admin"].includes(profile?.role || "")}>
+                <option value="piece">Штука</option>
+                <option value="hour">Час</option>
+                <option value="day">Сутки</option>
+                <option value="booking">Заказ</option>
+              </select>
+              <label className="toggleLine">
+                <input type="checkbox" checked={draftActive} onChange={event => setDraftActive(event.target.checked)}
+                  disabled={!["owner","admin"].includes(profile?.role || "")}/>
+                <span>Услуга активна в каталоге</span>
+              </label>
+              <p className="editTip">Активация не включает оплату или продажи — соответствующие модули пока не созданы.</p>
+              {editError && <p className="loginError" role="alert">{editError}</p>}
+              <div className="editActions">
+                <button type="button" className="cancelEdit" onClick={() => setSelected(null)}>Отмена</button>
+                {["owner","admin"].includes(profile?.role || "") &&
+                <button type="button" className="saveEdit" disabled={saving} onClick={saveService}>
+                  {saving ? "Сохраняем..." : "Сохранить"}
+                </button>}
+              </div>
+            </section>
+          </div>
+        )}
       </div>
     </main>
   );
